@@ -2941,4 +2941,10 @@ void nvgTextMetrics(NVGcontext* ctx, float* ascender, float* descender, float* l
 	if (lineh != NULL)
 		*lineh *= invscale;
 }
+
+float nvgGetDevicePixelRatio(NVGcontext* ctx)
+{
+  return ctx->devicePxRatio;
+}
+
 // vim: ft=c nu noet ts=4
