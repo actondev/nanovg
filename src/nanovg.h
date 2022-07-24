@@ -32,6 +32,11 @@ extern "C" {
 
 typedef struct NVGcontext NVGcontext;
 
+// Perform vertex transformation in shader. Allows applying transformations to display lists.
+#define NVG_TRANSFORM_IN_VERTEX_SHADER 1
+
+typedef struct NVGdisplayList NVGdisplayList;
+
 struct NVGcolor {
 	union {
 		float rgba[4];
@@ -83,46 +88,11 @@ enum NVGalign {
 	NVG_ALIGN_BASELINE	= 1<<6, // Default, align text vertically to baseline.
 };
 
-enum NVGblendFactor {
-	NVG_ZERO = 1<<0,
-	NVG_ONE = 1<<1,
-	NVG_SRC_COLOR = 1<<2,
-	NVG_ONE_MINUS_SRC_COLOR = 1<<3,
-	NVG_DST_COLOR = 1<<4,
-	NVG_ONE_MINUS_DST_COLOR = 1<<5,
-	NVG_SRC_ALPHA = 1<<6,
-	NVG_ONE_MINUS_SRC_ALPHA = 1<<7,
-	NVG_DST_ALPHA = 1<<8,
-	NVG_ONE_MINUS_DST_ALPHA = 1<<9,
-	NVG_SRC_ALPHA_SATURATE = 1<<10,
-};
-
-enum NVGcompositeOperation {
-	NVG_SOURCE_OVER,
-	NVG_SOURCE_IN,
-	NVG_SOURCE_OUT,
-	NVG_ATOP,
-	NVG_DESTINATION_OVER,
-	NVG_DESTINATION_IN,
-	NVG_DESTINATION_OUT,
-	NVG_DESTINATION_ATOP,
-	NVG_LIGHTER,
-	NVG_COPY,
-	NVG_XOR,
-};
-
-struct NVGcompositeOperationState {
-	int srcRGB;
-	int dstRGB;
-	int srcAlpha;
-	int dstAlpha;
-};
-typedef struct NVGcompositeOperationState NVGcompositeOperationState;
-
 struct NVGglyphPosition {
 	const char* str;	// Position of the glyph in the input string.
 	float x;			// The x-coordinate of the logical glyph position.
 	float minx, maxx;	// The bounds of the glyph shape.
+	const char* next;	// Pointer to next glyph to be processed.
 };
 typedef struct NVGglyphPosition NVGglyphPosition;
 
@@ -141,7 +111,6 @@ enum NVGimageFlags {
 	NVG_IMAGE_REPEATY			= 1<<2,		// Repeat image in Y direction.
 	NVG_IMAGE_FLIPY				= 1<<3,		// Flips (inverses) image in Y direction when rendered.
 	NVG_IMAGE_PREMULTIPLIED		= 1<<4,		// Image data has premultiplied alpha.
-	NVG_IMAGE_NEAREST			= 1<<5,		// Image interpolation is Nearest instead Linear
 };
 
 // Begin drawing a new frame
@@ -160,21 +129,29 @@ void nvgCancelFrame(NVGcontext* ctx);
 // Ends drawing flushing remaining render state.
 void nvgEndFrame(NVGcontext* ctx);
 
-//
-// Composite operation
-//
-// The composite operations in NanoVG are modeled after HTML Canvas API, and
-// the blend func is based on OpenGL (see corresponding manuals for more info).
-// The colors in the blending state have premultiplied alpha.
+// Create a new display list for caching geometry in NanoVG front end. The display list will cache
+// tesselated/baked paths and text layouts. The cache grows dynamically; with initalNumCommands
+// parameter you can specifiy the inital size (use -1 for default size).
+// Returns handle to display list object.
+NVGdisplayList* nvgCreateDisplayList(int initalNumCommands);
 
-// Sets the composite operation. The op parameter should be one of NVGcompositeOperation.
-void nvgGlobalCompositeOperation(NVGcontext* ctx, int op);
+// Deletes a generated display list and frees all memory.
+void nvgDeleteDisplayList(NVGdisplayList* list);
 
-// Sets the composite operation with custom pixel arithmetic. The parameters should be one of NVGblendFactor.
-void nvgGlobalCompositeBlendFunc(NVGcontext* ctx, int sfactor, int dfactor);
+// Bind the display list; all NanoVG draw commands after this call will be cached. Including scissor and
+// paint. To unbind the display list set list parameter to NULL.
+void nvgBindDisplayList(NVGcontext* ctx, NVGdisplayList* list);
 
-// Sets the composite operation with custom pixel arithmetic for RGB and alpha components separately. The parameters should be one of NVGblendFactor.
-void nvgGlobalCompositeBlendFuncSeparate(NVGcontext* ctx, int srcRGB, int dstRGB, int srcAlpha, int dstAlpha);
+// Clears the cache but does not free or reallocate any memory. The size of cache keeps the same, even if
+// cache grew during previous use.
+void nvgResetDisplayList(NVGdisplayList* list);
+
+// Draws the cached geometry by passing it to the back end. The current transform and global alpha is
+// applied to the display list.
+void nvgDrawDisplayList(NVGcontext* ctx, NVGdisplayList* list);
+
+// Check if the texture atlas changed and we need to recreate display lists. Must be called before nvgEndFrame!
+int nvgFindOutdatedDisplayListResources(NVGcontext * ctx);
 
 //
 // Color utils
@@ -237,9 +214,6 @@ void nvgReset(NVGcontext* ctx);
 // using nvgLinearGradient(), nvgBoxGradient(), nvgRadialGradient() and nvgImagePattern().
 //
 // Current render style can be saved and restored using nvgSave() and nvgRestore().
-
-// Sets whether to draw antialias for nvgStroke() and nvgFill(). It's enabled by default.
-void nvgShapeAntiAlias(NVGcontext* ctx, int enabled);
 
 // Sets current stroke style to a solid color.
 void nvgStrokeColor(NVGcontext* ctx, NVGcolor color);
@@ -493,9 +467,6 @@ void nvgRect(NVGcontext* ctx, float x, float y, float w, float h);
 // Creates new rounded rectangle shaped sub-path.
 void nvgRoundedRect(NVGcontext* ctx, float x, float y, float w, float h, float r);
 
-// Creates new rounded rectangle shaped sub-path with varying radii for each corner.
-void nvgRoundedRectVarying(NVGcontext* ctx, float x, float y, float w, float h, float radTopLeft, float radTopRight, float radBottomRight, float radBottomLeft);
-
 // Creates new ellipse shaped sub-path.
 void nvgEllipse(NVGcontext* ctx, float cx, float cy, float rx, float ry);
 
@@ -507,6 +478,12 @@ void nvgFill(NVGcontext* ctx);
 
 // Fills the current path with current stroke style.
 void nvgStroke(NVGcontext* ctx);
+
+// Additional functions that will draw simple geometries fast.
+// No antialiasing -just pure triangles. Helpful for rendering bitmaps
+// uv parameter is optional (float[4]: minx, miny, maxx, maxy)
+void nvgFillRectSimple(NVGcontext* ctx, float x, float y, float w, float h, const float * uv);
+void nvgStrokeRectSimple(NVGcontext* ctx, float x, float y, float w, float h, const float * uv);
 
 
 //
@@ -671,9 +648,12 @@ struct NVGparams {
 	void (*renderViewport)(void* uptr, float width, float height, float devicePixelRatio);
 	void (*renderCancel)(void* uptr);
 	void (*renderFlush)(void* uptr);
-	void (*renderFill)(void* uptr, NVGpaint* paint, NVGcompositeOperationState compositeOperation, NVGscissor* scissor, float fringe, const float* bounds, const NVGpath* paths, int npaths);
-	void (*renderStroke)(void* uptr, NVGpaint* paint, NVGcompositeOperationState compositeOperation, NVGscissor* scissor, float fringe, float strokeWidth, const NVGpath* paths, int npaths);
-	void (*renderTriangles)(void* uptr, NVGpaint* paint, NVGcompositeOperationState compositeOperation, NVGscissor* scissor, const NVGvertex* verts, int nverts, float fringe);
+	void (*renderFill)(void* uptr, NVGpaint* paint, NVGscissor* scissor, const float* xform,
+                       float fringe, const float* bounds, const NVGpath* paths, int npaths);
+	void (*renderStroke)(void* uptr, NVGpaint* paint, NVGscissor* scissor, const float* xform,
+                         float fringe, float strokeWidth, const NVGpath* paths, int npaths);
+	void (*renderTriangles)(void* uptr, NVGpaint* paint, NVGscissor* scissor, const float* xform,
+                            const NVGvertex* verts, int nverts);
 	void (*renderDelete)(void* uptr);
 };
 typedef struct NVGparams NVGparams;

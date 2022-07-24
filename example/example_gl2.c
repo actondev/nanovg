@@ -20,7 +20,6 @@
 #ifdef NANOVG_GLEW
 #  include <GL/glew.h>
 #endif
-#define GLFW_INCLUDE_GLEXT
 #include <GLFW/glfw3.h>
 #include "nanovg.h"
 #define NANOVG_GL2_IMPLEMENTATION
@@ -52,6 +51,8 @@ static void key(GLFWwindow* window, int key, int scancode, int action, int mods)
 		premult = !premult;
 }
 
+#define CACHE 1
+
 int main()
 {
 	GLFWwindow* window;
@@ -59,6 +60,13 @@ int main()
 	NVGcontext* vg = NULL;
 	PerfGraph fps;
 	double prevt = 0;
+
+#if CACHE
+    int runs = 0;
+	float r = 0;
+	NVGdisplayList* cache = NULL;
+#endif
+
 
 	if (!glfwInit()) {
 		printf("Failed to init GLFW.");
@@ -139,7 +147,41 @@ int main()
 
 		nvgBeginFrame(vg, winWidth, winHeight, pxRatio);
 
+#if CACHE
+		if (runs++ % 60 == 0) //draw to display list
+		{
+			if (!cache)
+				cache = nvgCreateDisplayList(-1);
+
+			nvgGlobalAlpha(vg, 1.0f); //draw to cache at full alpha, we can modify this later
+
+            nvgResetDisplayList(cache);
+			nvgBindDisplayList(vg, cache);
+
+			renderDemo(vg, mx, my, winWidth, winHeight, t, blowup, &data);
+
+            nvgBindDisplayList(vg, NULL);
+        }
+
+		if (cache) //draw display list to screen with custom transform
+		{
+			float scale = 0.8f;
+			nvgTranslate(vg, winWidth/2, winHeight/2);
+			scale = scale + ((1-scale) * (sinf(t)/(3.14f)));
+			nvgScale(vg, scale, scale);
+
+			nvgRotate(vg, r += 0.2f * dt);
+			nvgTranslate(vg, -winWidth/2 , -winHeight/2 );
+            //nvgGlobalAlpha(vg, scale);
+
+			nvgDrawDisplayList(vg, cache);
+
+			nvgResetTransform(vg);
+		}
+#else
 		renderDemo(vg, mx,my, winWidth,winHeight, t, blowup, &data);
+#endif
+
 		renderGraph(vg, 5,5, &fps);
 
 		nvgEndFrame(vg);
@@ -148,12 +190,17 @@ int main()
 			screenshot = 0;
 			saveScreenShot(fbWidth, fbHeight, premult, "dump.png");
 		}
-		
+
 		glfwSwapBuffers(window);
 		glfwPollEvents();
 	}
 
 	freeDemoData(vg, &data);
+
+#if CACHE
+	if (cache)
+		nvgDeleteDisplayList(cache);
+#endif
 
 	nvgDeleteGL2(vg);
 
