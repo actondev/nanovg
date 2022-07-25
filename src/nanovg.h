@@ -32,6 +32,11 @@ extern "C" {
 
 typedef struct NVGcontext NVGcontext;
 
+// Perform vertex transformation in backend. Allows applying transformations to display lists.
+#define NVG_TRANSFORM_IN_BACKEND 1
+
+typedef struct NVGdisplayList NVGdisplayList;
+
 struct NVGcolor {
 	union {
 		float rgba[4];
@@ -123,6 +128,7 @@ struct NVGglyphPosition {
 	const char* str;	// Position of the glyph in the input string.
 	float x;			// The x-coordinate of the logical glyph position.
 	float minx, maxx;	// The bounds of the glyph shape.
+	const char* next;	// Pointer to next glyph to be processed.
 };
 typedef struct NVGglyphPosition NVGglyphPosition;
 
@@ -160,6 +166,30 @@ void nvgCancelFrame(NVGcontext* ctx);
 // Ends drawing flushing remaining render state.
 void nvgEndFrame(NVGcontext* ctx);
 
+// Create a new display list for caching geometry in NanoVG front end. The display list will cache
+// tesselated/baked paths and text layouts. The cache grows dynamically; with initalNumCommands
+// parameter you can specifiy the inital size (use -1 for default size).
+// Returns handle to display list object.
+NVGdisplayList* nvgCreateDisplayList(int initalNumCommands);
+    
+// Deletes a generated display list and frees all memory.
+void nvgDeleteDisplayList(NVGdisplayList* list);
+    
+// Bind the display list; all NanoVG draw commands after this call will be cached. Including scissor and
+// paint. To unbind the display list set list parameter to NULL.
+void nvgBindDisplayList(NVGcontext* ctx, NVGdisplayList* list);
+    
+// Clears the cache but does not free or reallocate any memory. The size of cache keeps the same, even if
+// cache grew during previous use.
+void nvgResetDisplayList(NVGdisplayList* list);
+    
+// Draws the cached geometry by passing it to the back end. The current transform and global alpha is
+// applied to the display list.
+void nvgDrawDisplayList(NVGcontext* ctx, NVGdisplayList* list);
+	
+// Check if the texture atlas changed and we need to recreate display lists. Must be called before nvgEndFrame!
+int nvgFindOutdatedDisplayListResources(NVGcontext * ctx);
+	
 //
 // Composite operation
 //
@@ -237,9 +267,6 @@ void nvgReset(NVGcontext* ctx);
 // using nvgLinearGradient(), nvgBoxGradient(), nvgRadialGradient() and nvgImagePattern().
 //
 // Current render style can be saved and restored using nvgSave() and nvgRestore().
-
-// Sets whether to draw antialias for nvgStroke() and nvgFill(). It's enabled by default.
-void nvgShapeAntiAlias(NVGcontext* ctx, int enabled);
 
 // Sets current stroke style to a solid color.
 void nvgStrokeColor(NVGcontext* ctx, NVGcolor color);
@@ -430,6 +457,8 @@ NVGpaint nvgImagePattern(NVGcontext* ctx, float ox, float oy, float ex, float ey
 // The scissor rectangle is transformed by the current transform.
 void nvgScissor(NVGcontext* ctx, float x, float y, float w, float h);
 
+void nvgCurrentScissor(NVGcontext* ctx, float* rect);
+
 // Intersects current scissor rectangle with the specified rectangle.
 // The scissor rectangle is transformed by the current transform.
 // Note: in case the rotation of previous scissor rect differs from
@@ -507,6 +536,12 @@ void nvgFill(NVGcontext* ctx);
 
 // Fills the current path with current stroke style.
 void nvgStroke(NVGcontext* ctx);
+
+// Additional functions that will draw simple geometries fast.
+// No antialiasing -just pure triangles. Helpful for rendering bitmaps
+// uv parameter is optional (float[4]: minx, miny, maxx, maxy)
+void nvgFillRectSimple(NVGcontext* ctx, float x, float y, float w, float h, const float * uv);
+void nvgStrokeRectSimple(NVGcontext* ctx, float x, float y, float w, float h, const float * uv);
 
 
 //
@@ -668,12 +703,15 @@ struct NVGparams {
 	int (*renderDeleteTexture)(void* uptr, int image);
 	int (*renderUpdateTexture)(void* uptr, int image, int x, int y, int w, int h, const unsigned char* data);
 	int (*renderGetTextureSize)(void* uptr, int image, int* w, int* h);
-	void (*renderViewport)(void* uptr, float width, float height, float devicePixelRatio);
+	void (*renderViewport)(void* uptr, int width, int height, float devicePixelRatio);
 	void (*renderCancel)(void* uptr);
 	void (*renderFlush)(void* uptr);
-	void (*renderFill)(void* uptr, NVGpaint* paint, NVGcompositeOperationState compositeOperation, NVGscissor* scissor, float fringe, const float* bounds, const NVGpath* paths, int npaths);
-	void (*renderStroke)(void* uptr, NVGpaint* paint, NVGcompositeOperationState compositeOperation, NVGscissor* scissor, float fringe, float strokeWidth, const NVGpath* paths, int npaths);
-	void (*renderTriangles)(void* uptr, NVGpaint* paint, NVGcompositeOperationState compositeOperation, NVGscissor* scissor, const NVGvertex* verts, int nverts, float fringe);
+	void (*renderFill)(void* uptr, NVGpaint* paint, NVGcompositeOperationState compositeOperation, NVGscissor* scissor, const float* xform,
+                       float fringe, const float* bounds, const NVGpath* paths, int npaths);
+	void (*renderStroke)(void* uptr, NVGpaint* paint, NVGcompositeOperationState compositeOperation, NVGscissor* scissor, const float* xform,
+                         float fringe, float strokeWidth, const float* bounds, const NVGpath* paths, int npaths);
+	void (*renderTriangles)(void* uptr, NVGpaint* paint, NVGcompositeOperationState compositeOperation, NVGscissor* scissor, const float* xform,
+                            const float* bounds, const NVGvertex* verts, int nverts);
 	void (*renderDelete)(void* uptr);
 };
 typedef struct NVGparams NVGparams;
