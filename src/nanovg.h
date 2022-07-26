@@ -33,6 +33,7 @@ extern "C" {
 typedef struct NVGcontext NVGcontext;
 
 // Perform vertex transformation in backend. Allows applying transformations to display lists.
+// TODO bugs without it
 #define NVG_TRANSFORM_IN_BACKEND 1
 
 typedef struct NVGdisplayList NVGdisplayList;

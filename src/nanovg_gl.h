@@ -1223,7 +1223,9 @@ static void glnvg__renderBegin(GLNVGcontext* gl)
         
         // Setup require GL state.
         glUseProgram(gl->shader.prog);
-        
+
+        // TODO important! was missing from hugoam & was causing weird text draw
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glFrontFace(GL_CCW);
@@ -1363,8 +1365,8 @@ static void glnvg__transformBounds(const float *bounds, const float* t, float * 
 }
 
 
-//#define BATCH_RENDER_CALLS 1
-//#define BATCH_RENDER_HIDE_HIDDEN 1    // this will remove calls that are hidden by other calls
+#define BATCH_RENDER_CALLS 1
+#define BATCH_RENDER_HIDE_HIDDEN 0    // this will remove calls that are hidden by other calls
                                         // Note: only axis aligned bounding boxes are checked
                                         // so this will only work when drawing mostly solid rectangular shapes (e.g. UIs)
 
